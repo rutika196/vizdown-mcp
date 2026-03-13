@@ -1,37 +1,112 @@
 # Vizdown-MCP
 
-An MCP server that converts Markdown files into beautiful diagrams — flowcharts, mind maps, architecture diagrams, ER diagrams, Gantt charts, sequence diagrams, and more.
+An MCP server that converts Markdown files into beautiful diagrams — flowcharts, mind maps, architecture diagrams, ER diagrams, Gantt charts, sequence diagrams, and more. Built with Apple HIG design language.
 
 ## Installation
 
 ```bash
+git clone https://github.com/rutika196/vizdown-mcp.git
 cd vizdown-mcp
+python3 -m venv .venv
+source .venv/bin/activate        # macOS / Linux
+# .venv\Scripts\activate         # Windows
 pip install -e .
 playwright install chromium
 ```
 
-## Usage
+## IDE Setup
 
-### As an MCP server (stdio transport)
+### Cursor
 
-```bash
-vizdown-mcp
-# or
-python -m src.server
-```
-
-Add to your MCP client config (e.g. Claude Desktop, Cursor):
+Create or edit `.cursor/mcp.json` in your project root:
 
 ```json
 {
   "mcpServers": {
     "vizdown-mcp": {
-      "command": "python",
+      "command": "/absolute/path/to/vizdown-mcp/.venv/bin/python",
       "args": ["-m", "src.server"],
-      "cwd": "/path/to/vizdown-mcp"
+      "cwd": "/absolute/path/to/vizdown-mcp"
     }
   }
 }
+```
+
+> Replace `/absolute/path/to/vizdown-mcp` with your actual path, e.g. `~/Desktop/vizdown-mcp`.
+
+### VS Code
+
+Create `.vscode/mcp.json` in your project root:
+
+```json
+{
+  "servers": {
+    "vizdown-mcp": {
+      "command": "/absolute/path/to/vizdown-mcp/.venv/bin/python",
+      "args": ["-m", "src.server"],
+      "cwd": "/absolute/path/to/vizdown-mcp"
+    }
+  }
+}
+```
+
+> VS Code reads MCP config from `.vscode/mcp.json` — no need to touch `settings.json`.
+
+### IntelliJ IDEA / WebStorm / PyCharm (JetBrains)
+
+JetBrains IDEs (2025.1+) support MCP via the **AI Assistant** plugin.
+
+1. Go to **Settings** → **Tools** → **AI Assistant** → **MCP Servers**.
+2. Click **+ Add** and fill in:
+
+| Field | Value |
+|-------|-------|
+| **Name** | `vizdown-mcp` |
+| **Command** | `/absolute/path/to/vizdown-mcp/.venv/bin/python` |
+| **Arguments** | `-m src.server` |
+| **Working Directory** | `/absolute/path/to/vizdown-mcp` |
+
+Or edit the MCP config file directly at `~/.config/jetbrains/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "vizdown-mcp": {
+      "command": "/absolute/path/to/vizdown-mcp/.venv/bin/python",
+      "args": ["-m", "src.server"],
+      "cwd": "/absolute/path/to/vizdown-mcp"
+    }
+  }
+}
+```
+
+> **Windows users**: replace `.venv/bin/python` with `.venv\\Scripts\\python.exe` and use `\\` in paths.
+
+### Claude Desktop
+
+Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
+
+```json
+{
+  "mcpServers": {
+    "vizdown-mcp": {
+      "command": "/absolute/path/to/vizdown-mcp/.venv/bin/python",
+      "args": ["-m", "src.server"],
+      "cwd": "/absolute/path/to/vizdown-mcp"
+    }
+  }
+}
+```
+
+## Usage
+
+### As a standalone server (stdio transport)
+
+```bash
+source .venv/bin/activate
+vizdown-mcp
+# or
+python -m src.server
 ```
 
 ### MCP Tools
@@ -68,13 +143,23 @@ flowchart, sequence, class, ER, state, gantt, gitGraph, pie, timeline, quadrant,
 
 ## Examples
 
-See the `examples/` folder:
+See the `examples/` folder — 13 ready-to-render Markdown files:
 
-- `auth_flow.md` — Flowchart showing authentication process
-- `microservices.md` — Architecture diagram with 17 services and groups
-- `database_schema.md` — ER diagram
-- `project_roadmap.md` — Gantt chart
-- `system_overview.md` — Mind map
+| File | Diagram Type |
+|------|-------------|
+| `auth_flow.md` | Flowchart (OAuth 2.0 + MFA) |
+| `api_sequence.md` | Sequence diagram |
+| `order_states.md` | State diagram |
+| `database_schema.md` | ER diagram |
+| `class_diagram.md` | Class diagram |
+| `project_roadmap.md` | Gantt chart |
+| `tech_stack_pie.md` | Pie chart |
+| `git_workflow.md` | Git graph |
+| `company_timeline.md` | Timeline |
+| `user_journey.md` | User journey |
+| `system_overview.md` | Mind map (custom SVG) |
+| `microservices.md` | Architecture (17 services + groups) |
+| `ci_cd_pipeline.md` | Architecture (CI/CD pipeline) |
 
 ## Running Tests
 
