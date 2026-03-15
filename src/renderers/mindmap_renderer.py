@@ -234,22 +234,20 @@ def _svg_defs(theme: str, palette: list[dict]) -> str:
         '</filter>'
     )
 
-    # Per-branch linear gradients for connectors (vivid → lighter)
+    # Per-branch connector gradients — use the vivid stroke color, fading to soft
     for i, entry in enumerate(palette):
-        h, s = entry["hue"], entry["saturation"]
-        from src.utils.color_palette import _hsl_to_hex
-        c_start = _hsl_to_hex(h, s, 48.0 if theme == "light" else 55.0)
-        c_end = _hsl_to_hex(h, max(s - 20, 35), 72.0 if theme == "light" else 68.0)
+        c_vivid = entry["border"]
+        c_soft = entry["fill"]
         defs.append(
             f'<linearGradient id="brGrad{i}" x1="0%" y1="0%" x2="100%" y2="0%">'
-            f'<stop offset="0%" stop-color="{c_start}" stop-opacity="0.65"/>'
-            f'<stop offset="100%" stop-color="{c_end}" stop-opacity="0.35"/>'
+            f'<stop offset="0%" stop-color="{c_vivid}" stop-opacity="0.55"/>'
+            f'<stop offset="100%" stop-color="{c_soft}" stop-opacity="0.25"/>'
             f'</linearGradient>'
         )
         defs.append(
             f'<linearGradient id="brGradR{i}" x1="100%" y1="0%" x2="0%" y2="0%">'
-            f'<stop offset="0%" stop-color="{c_start}" stop-opacity="0.65"/>'
-            f'<stop offset="100%" stop-color="{c_end}" stop-opacity="0.35"/>'
+            f'<stop offset="0%" stop-color="{c_vivid}" stop-opacity="0.55"/>'
+            f'<stop offset="100%" stop-color="{c_soft}" stop-opacity="0.25"/>'
             f'</linearGradient>'
         )
 
@@ -295,7 +293,7 @@ def _render_node(node: MindMapNode, palette: list[dict], theme: str) -> str:
     elif node.level == 1:
         idx = node.branch_index % len(palette) if palette else 0
         entry = palette[idx]
-        colors = depth_color(entry["hue"], entry["saturation"], 1, theme)
+        colors = depth_color(entry["hue"], entry.get("fill_saturation", 50), 1, theme)
         fill = colors["fill"]
         border = colors["border"]
         text_color = colors["text"]
@@ -304,7 +302,7 @@ def _render_node(node: MindMapNode, palette: list[dict], theme: str) -> str:
     else:
         idx = node.branch_index % len(palette) if palette else 0
         entry = palette[idx]
-        colors = depth_color(entry["hue"], entry["saturation"], node.level, theme)
+        colors = depth_color(entry["hue"], entry.get("fill_saturation", 50), node.level, theme)
         fill = colors["fill"]
         border = colors["border"]
         text_color = colors["text"]
@@ -361,10 +359,7 @@ def render_mindmap(syntax: str, theme: str = "light") -> str:
     w = max_x - min_x
     h = max_y - min_y
 
-    if theme == "light":
-        bg_color = "#FAFBFC"
-    else:
-        bg_color = "#0F172A"
+    bg_color = "#FFFFFF" if theme == "light" else "#0F172A"
 
     parts = [
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{min_x} {min_y} {w} {h}" '
