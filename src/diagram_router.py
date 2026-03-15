@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import logging
+
 from src.markdown_parser import DiagramBlock
+
+logger = logging.getLogger("vizdown.router")
 
 CUSTOM_SVG_TYPES = {"mindmap", "architecture", "service-diagram"}
 
@@ -33,11 +37,23 @@ async def render_block(
         from src.renderers.architecture_renderer import render_architecture
         svg = render_architecture(block.syntax, theme=theme)
     else:
-        from src.renderers.mermaid_renderer import render_mermaid
+        try:
+            from src.renderers.mermaid_renderer import render_mermaid
+        except ImportError:
+            raise RuntimeError(
+                f"Diagram type '{dtype}' requires Playwright for Mermaid rendering. "
+                "Install with: pip install playwright && playwright install chromium"
+            )
         svg = await render_mermaid(block.syntax, theme=theme, look=look)
 
     if output_format != "svg":
-        from src.utils.export import convert_svg
+        try:
+            from src.utils.export import convert_svg
+        except ImportError:
+            raise RuntimeError(
+                f"Export to '{output_format}' requires additional dependencies. "
+                "Install with: pip install playwright cairosvg Pillow"
+            )
         encoded = await convert_svg(svg, output_format=output_format, scale=scale)
     else:
         import base64
