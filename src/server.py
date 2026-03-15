@@ -118,6 +118,7 @@ async def render_auto_diagram(
       - sequenceDiagram — actor interactions, request/response (Mermaid)
       - stateDiagram  — states and transitions (Mermaid)
       - erDiagram     — entities, attributes, relationships (Mermaid)
+      - classDiagram  — classes, methods, inheritance, composition (Mermaid)
       - timeline      — dates, milestones, phases (Mermaid)
 
     Args:

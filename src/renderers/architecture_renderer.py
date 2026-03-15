@@ -723,7 +723,7 @@ def render_architecture(syntax: str, theme: str = "light") -> str:
         s.x += offset_x
         s.y += offset_y
 
-    bg_color = "#F8F8F8" if theme == "light" else "#111827"
+    bg_color = "#FFFFFF" if theme == "light" else "#111827"
 
     parts = [
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {svg_w} {svg_h}" '

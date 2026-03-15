@@ -240,14 +240,14 @@ def _svg_defs(theme: str, palette: list[dict]) -> str:
         c_soft = entry["fill"]
         defs.append(
             f'<linearGradient id="brGrad{i}" x1="0%" y1="0%" x2="100%" y2="0%">'
-            f'<stop offset="0%" stop-color="{c_vivid}" stop-opacity="0.55"/>'
-            f'<stop offset="100%" stop-color="{c_soft}" stop-opacity="0.25"/>'
+            f'<stop offset="0%" stop-color="{c_vivid}" stop-opacity="0.7"/>'
+            f'<stop offset="100%" stop-color="{c_soft}" stop-opacity="0.45"/>'
             f'</linearGradient>'
         )
         defs.append(
             f'<linearGradient id="brGradR{i}" x1="100%" y1="0%" x2="0%" y2="0%">'
-            f'<stop offset="0%" stop-color="{c_vivid}" stop-opacity="0.55"/>'
-            f'<stop offset="100%" stop-color="{c_soft}" stop-opacity="0.25"/>'
+            f'<stop offset="0%" stop-color="{c_vivid}" stop-opacity="0.7"/>'
+            f'<stop offset="100%" stop-color="{c_soft}" stop-opacity="0.45"/>'
             f'</linearGradient>'
         )
 
@@ -271,7 +271,7 @@ def _bezier(
         cx1, cx2 = x1 - cp_offset, x2 + cp_offset
         grad_id = f"brGradR{branch_idx}"
 
-    stroke_w = max(3.0 - parent_level * 0.5, 1.2)
+    stroke_w = max(3.0 - parent_level * 0.5, 1.8)
 
     return (
         f'<path d="M{x1},{y1} C{cx1},{y1} {cx2},{y2} {x2},{y2}" '

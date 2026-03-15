@@ -196,9 +196,8 @@ _SEQUENTIAL_RE = re.compile(
     re.IGNORECASE,
 )
 _DECISION_RE = re.compile(
-    r"\b(if|when|check|decide|validate|verify|whether|condition|"
-    r"branch|else|otherwise|approve|reject|accept|deny|pass|fail|"
-    r"success|error|true|false|yes|no)\b",
+    r"(?:^|\b)(?:if\b|whether\b|check\s+(?:if|whether)\b|"
+    r"decide\b|else\b|otherwise\b|branch\b)",
     re.IGNORECASE,
 )
 _NUMBERED_STEP_RE = re.compile(r"^\s*(\d+)\s*[.\)]\s+(.+)", re.MULTILINE)
@@ -334,6 +333,20 @@ class StateTransition:
 class TimelineEvent:
     date: str
     description: str
+
+@dataclass
+class ClassInfo:
+    name: str
+    attributes: list[tuple[str, str, str]]   # (visibility, type, name)
+    methods: list[tuple[str, str, str]]       # (visibility, return_type, signature)
+    stereotype: str = ""                       # "abstract", "interface", "enum", ""
+
+@dataclass
+class ClassRelation:
+    src: str
+    dst: str
+    kind: str    # "inheritance", "implementation", "composition", "aggregation", "association", "dependency"
+    label: str = ""
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -583,16 +596,20 @@ def _extract_entities(text: str, sentences: list[str]) -> list[Entity]:
 
 
 def _titlecase(s: str) -> str:
-    """Smart title case preserving known acronyms."""
+    """Smart title case preserving known acronyms and ALL-CAPS words."""
     acronyms = {"api", "cdn", "dns", "vpn", "ssl", "tls", "http", "https",
                 "sql", "db", "ci", "cd", "ui", "ux", "jwt", "sso", "iam",
                 "aws", "gcp", "s3", "ec2", "rds", "sqs", "sns", "ecs", "eks",
-                "grpc", "mqtt", "amqp", "smtp", "imap", "ldap"}
+                "grpc", "mqtt", "amqp", "smtp", "imap", "ldap",
+                "nyse", "nasdaq", "cme", "ice", "dtcc", "nscc", "fix",
+                "fx", "etf", "otc", "lch", "cls", "var"}
     words = s.split()
     result = []
     for w in words:
         if w.lower() in acronyms:
             result.append(w.upper())
+        elif len(w) >= 2 and w.isupper():
+            result.append(w)
         else:
             result.append(w.capitalize())
     return " ".join(result)
@@ -922,25 +939,48 @@ _FROM_TO_STATE_RE = re.compile(
     r"(?:goes?\s+from|from)\s+([\w]+(?: [\w]+){0,2})\s+to\s+([\w]+(?: [\w]+){0,2})",
     re.IGNORECASE,
 )
+_STATE_DESCRIPTOR_WORDS = frozenset({
+    "terminal", "final", "initial", "current", "previous",
+    "next", "same", "any", "each", "every", "first", "last",
+})
+_INITIAL_STATE_RE = re.compile(
+    r"(?:begins?|starts?)\s+in\s+(?:the\s+)?"
+    r"([\w]+(?: [\w]+)*?)\s+state\b",
+    re.IGNORECASE,
+)
+_INITIAL_STATE_RE2 = re.compile(
+    r"(?:begins?|starts?)\s+in\s+(?:the\s+)?"
+    r"((?:[A-Z][\w]+)(?: [A-Z][\w]+)*)",
+)
 
 
 def _extract_states(text: str, sentences: list[str]) -> tuple[list[str], list[StateTransition]]:
     """Multi-phase state and transition extraction.
 
     Phase 1: Static word list (tiered strong/weak)
-    Phase 2: Transition-verb destinations ("transitions to Shipped" → Shipped)
-    Phase 3: Explicit label patterns ("the Submitted state" → Submitted)
-    Phase 4: Build transitions from consecutive state mentions per sentence
-    Phase 5: "from X to Y" patterns
+    Phase 2: Transition-verb destinations
+    Phase 3: Explicit label patterns ("the X state")
+    Phase 4: Dedup — remove single-word states that are substrings of multi-word states
+    Phase 5: Sentence-level consecutive state mentions → transitions
+    Phase 6: "from X to Y" patterns
+    Phase 7: Detect initial state from "begins/starts in X"
     """
     seen: set[str] = set()
     states: list[str] = []
+    word_list_only: set[str] = set()
+    initial_state: str | None = None
 
-    def _add_state(name: str) -> None:
+    def _add_state(name: str, *, from_word_list: bool = False) -> None:
         tc = _titlecase(name)
+        if tc.lower() in _STATE_DESCRIPTOR_WORDS:
+            return
         if tc.lower() not in seen and len(tc) > 1 and len(tc.split()) <= 4:
             seen.add(tc.lower())
             states.append(tc)
+            if from_word_list:
+                word_list_only.add(tc.lower())
+        elif not from_word_list:
+            word_list_only.discard(tc.lower())
 
     has_context = bool(_STATE_CONTEXT_RE.search(text))
 
@@ -955,7 +995,7 @@ def _extract_states(text: str, sentences: list[str]) -> tuple[list[str], list[St
             weak_found.add(word)
     use_weak = len(strong_found) >= 2 or has_context
     for w in strong_found | (weak_found if use_weak else set()):
-        _add_state(w)
+        _add_state(w, from_word_list=True)
 
     # Phase 2a: Transition-verb destinations
     for m in _TRANS_DEST_RE.finditer(text):
@@ -975,51 +1015,159 @@ def _extract_states(text: str, sentences: list[str]) -> tuple[list[str], list[St
     for m in _STATE_LABEL_RE.finditer(text):
         _add_state(m.group(1).strip())
 
-    # Phase 4: Sentence-level consecutive state mentions → transitions
+    # Collect standalone transition destinations (needed for smart dedup)
+    _standalone_dests: set[str] = set()
+    for m in _TRANS_DEST_RE.finditer(text):
+        _standalone_dests.add(m.group(1).strip().lower())
+    _trans_line_re_local = re.compile(
+        r"\b(?:transition|mov|chang|becom|go(?:es|ing)?)\w*\b", re.IGNORECASE,
+    )
+    _to_cap_local = re.compile(r"\bto\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)")
+    for line in text.split("\n"):
+        if _trans_line_re_local.search(line):
+            for m in _to_cap_local.finditer(line):
+                _standalone_dests.add(m.group(1).strip().lower())
+
+    # Phase 4: Dedup — remove single-word states that are just components
+    # of multi-word states, UNLESS they also appear as standalone destinations
+    multi_word = {s for s in states if len(s.split()) >= 2}
+    component_words: set[str] = set()
+    for mw in multi_word:
+        for word in mw.lower().split():
+            component_words.add(word)
+    # Also collect state-label pattern matches as contextual evidence
+    _label_confirmed: set[str] = set()
+    for m in _STATE_LABEL_RE.finditer(text):
+        _label_confirmed.add(_titlecase(m.group(1).strip()).lower())
+
+    states = [
+        s for s in states
+        if len(s.split()) >= 2
+        or s.lower() not in component_words
+        or s.lower() in _standalone_dests
+    ]
+    # Remove word-list-only states that lack ANY transition/label context
+    states = [
+        s for s in states
+        if s.lower() not in word_list_only
+        or s.lower() in _standalone_dests
+        or s.lower() in _label_confirmed
+    ]
+    seen = {s.lower() for s in states}
+
+    # Detect initial state from "begins/starts in X state"
+    for pat in (_INITIAL_STATE_RE, _INITIAL_STATE_RE2):
+        for m in pat.finditer(text):
+            candidate = _titlecase(m.group(1).strip())
+            if candidate.lower() in seen:
+                initial_state = candidate
+                break
+        if initial_state:
+            break
+
+    # Phase 5: Sentence-level consecutive state mentions → transitions
     state_lookup = {s.lower(): s for s in states}
+    longer_states = sorted(state_lookup.keys(), key=len, reverse=True)
     transitions: list[StateTransition] = []
     seen_trans: set[tuple[str, str]] = set()
 
-    for sent in sentences:
-        sent_lower = sent.lower()
+    def _find_states_in(s: str) -> list[tuple[int, str]]:
+        """Find non-overlapping state mentions, preferring longer matches.
+
+        Single-word states require capitalized appearance (e.g. "Filled" not
+        "filled") to avoid matching adjectives/verbs.  Multi-word states
+        are matched case-insensitively (always intentional references).
+        """
+        sl = s.lower()
         hits: list[tuple[int, str]] = []
-        for sl, sc in state_lookup.items():
-            idx = sent_lower.find(sl)
-            if idx >= 0:
-                hits.append((idx, sc))
+        used: set[int] = set()
+        for state_l in longer_states:
+            is_single = " " not in state_l
+            idx = sl.find(state_l)
+            while idx >= 0:
+                if is_single and not s[idx].isupper():
+                    idx = sl.find(state_l, idx + 1)
+                    continue
+                span = set(range(idx, idx + len(state_l)))
+                if not span & used:
+                    hits.append((idx, state_lookup[state_l]))
+                    used |= span
+                idx = sl.find(state_l, idx + 1)
         hits.sort(key=lambda x: x[0])
+        deduped: list[tuple[int, str]] = []
+        for h in hits:
+            if not deduped or deduped[-1][1] != h[1]:
+                deduped.append(h)
+        return deduped
+
+    for sent in sentences:
+        hits = _find_states_in(sent)
         for i in range(len(hits) - 1):
             src, dst = hits[i][1], hits[i + 1][1]
             if src != dst and (src, dst) not in seen_trans:
                 seen_trans.add((src, dst))
                 transitions.append(StateTransition(from_state=src, trigger="", to_state=dst))
 
-    # Phase 4b: State appearance chain — consecutive distinct states = transitions
-    all_positions: list[tuple[int, str]] = []
-    text_lower = text.lower()
-    for sl, sc in state_lookup.items():
-        idx = text_lower.find(sl)
-        while idx >= 0:
-            all_positions.append((idx, sc))
-            idx = text_lower.find(sl, idx + len(sl))
-    all_positions.sort(key=lambda x: x[0])
-    prev_state = None
-    for _, st in all_positions:
-        if st != prev_state:
-            if prev_state and (prev_state, st) not in seen_trans:
-                seen_trans.add((prev_state, st))
-                transitions.append(StateTransition(from_state=prev_state, trigger="", to_state=st))
-            prev_state = st
+    # Phase 5b: Transition-destination chain — capture narrative flow by
+    # chaining destinations of transition verbs in text order.
+    # Uses line-level scanning (same as Phase 2b) for broad coverage.
+    dest_chain: list[tuple[int, str]] = []
+    _dest_strict_re = re.compile(
+        r"(?:transitions?\s+to|moves?\s+to|changes?\s+to|"
+        r"becomes?|goes?\s+to)\s+"
+        r"([A-Z][\w]+(?: [A-Z][\w]+)*)",
+    )
+    for m in _dest_strict_re.finditer(text):
+        name = _titlecase(m.group(1).strip())
+        canon = state_lookup.get(name.lower())
+        if canon:
+            dest_chain.append((m.start(), canon))
 
-    # Phase 5: "from X to Y" explicit pairs
+    for i, line in enumerate(text.split("\n")):
+        if _trans_line_re_local.search(line):
+            for m in _to_cap_local.finditer(line):
+                name = _titlecase(m.group(1).strip())
+                canon = state_lookup.get(name.lower())
+                if canon:
+                    offset = sum(len(l) + 1 for l in text.split("\n")[:i]) + m.start()
+                    dest_chain.append((offset, canon))
+
+    dest_chain.sort(key=lambda x: x[0])
+    ordered_dests: list[str] = []
+    for _, canon in dest_chain:
+        if not ordered_dests or ordered_dests[-1] != canon:
+            ordered_dests.append(canon)
+    for i in range(len(ordered_dests) - 1):
+        src, dst = ordered_dests[i], ordered_dests[i + 1]
+        if src != dst and (src, dst) not in seen_trans:
+            seen_trans.add((src, dst))
+            transitions.append(StateTransition(from_state=src, trigger="", to_state=dst))
+
+    # Phase 6: "from X to Y" explicit pairs
     for m in _FROM_TO_STATE_RE.finditer(text):
         src_raw = _titlecase(m.group(1).strip())
         dst_raw = _titlecase(m.group(2).strip())
-        src = state_lookup.get(src_raw.lower(), src_raw if src_raw.lower() in seen else None)
-        dst = state_lookup.get(dst_raw.lower(), dst_raw if dst_raw.lower() in seen else None)
+        src = state_lookup.get(src_raw.lower())
+        dst = state_lookup.get(dst_raw.lower())
         if src and dst and src != dst and (src, dst) not in seen_trans:
             seen_trans.add((src, dst))
             transitions.append(StateTransition(from_state=src, trigger="", to_state=dst))
+
+    # Phase 7: Reorder — initial state first
+    if initial_state and initial_state in states:
+        states.remove(initial_state)
+        states.insert(0, initial_state)
+
+    # Phase 8: If initial state has no outgoing transition, connect to first dest
+    if initial_state and ordered_dests:
+        has_outgoing = any(t.from_state == initial_state for t in transitions)
+        if not has_outgoing:
+            first_dest = ordered_dests[0]
+            if first_dest != initial_state and (initial_state, first_dest) not in seen_trans:
+                seen_trans.add((initial_state, first_dest))
+                transitions.insert(0, StateTransition(
+                    from_state=initial_state, trigger="", to_state=first_dest,
+                ))
 
     return states, transitions
 
@@ -1098,6 +1246,206 @@ def _extract_er_features(text: str, lines: list[str]) -> dict:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# §11b  CLASS DIAGRAM EXTRACTION
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_CLASS_DECL_RE = re.compile(
+    r"(?:^|\n)\s*(?:#+\s+)?"
+    r"(?:(?:public|private|protected|abstract|final|static)\s+)*"
+    r"(?:class|interface|enum|abstract\s+class)\s+"
+    r"([A-Z][\w]*(?:<[\w<>, ]+>)?)",
+    re.MULTILINE,
+)
+_CLASS_HEADING_RE = re.compile(
+    r"^#+\s+(?:(?:abstract|final|static)\s+)*"
+    r"(class|interface|enum|abstract\s+class)\s+"
+    r"([A-Z][\w]*)",
+    re.IGNORECASE | re.MULTILINE,
+)
+_CLASS_NAME_BLOCK_RE = re.compile(
+    r"^#+\s*([A-Z][\w]*(?:<[\w<>, ]+>)?)\s*$",
+    re.MULTILINE,
+)
+_INHERIT_RE = re.compile(
+    r"([A-Z][\w]*)\s+(?:extends|inherits(?:\s+from)?)\s+([A-Z][\w]*)",
+)
+_IMPLEMENT_RE = re.compile(
+    r"([A-Z][\w]*)\s+implements\s+([^\n.]+)",
+)
+_COMPOSE_RE = re.compile(
+    r"([A-Z][\w]*)\s+(?:has|contains|owns|composed\s+of)\s+(?:a\s+|an\s+|many\s+|one\s+)?([A-Z][\w]*)",
+)
+_AGGREGATE_RE = re.compile(
+    r"([A-Z][\w]*)\s+(?:aggregates?|uses?|has\s+a\s+reference\s+to)\s+([A-Z][\w]*)",
+)
+_DEPEND_RE = re.compile(
+    r"([A-Z][\w]*)\s+(?:depends\s+on|requires|creates?|imports?)\s+([A-Z][\w]*)",
+)
+_ASSOC_RE = re.compile(
+    r"([A-Z][\w]*)\s+(?:is\s+associated\s+with|relates?\s+to|links?\s+to|references?)\s+([A-Z][\w]*)",
+)
+
+_VISIBILITY_MAP = {
+    "public": "+", "private": "-", "protected": "#",
+    "+": "+", "-": "-", "#": "#",
+}
+_METHOD_SIG_RE = re.compile(
+    r"^\s*(?:(public|private|protected|\+|-|#)\s+)?"
+    r"(?:([\w<>\[\]]+)\s+)?"
+    r"([\w]+)\s*\(([^)]*)\)",
+    re.MULTILINE,
+)
+_ATTR_SIG_RE = re.compile(
+    r"^\s*(?:(public|private|protected|\+|-|#)\s+)?"
+    r"([\w<>\[\]]+)\s+([\w]+)\s*$",
+    re.MULTILINE,
+)
+_OOP_KEYWORDS_RE = re.compile(
+    r"\b(?:class|interface|abstract|extends|implements|"
+    r"inheritance|polymorphism|encapsulation|"
+    r"override|overload|constructor|destructor|"
+    r"getter|setter|singleton|factory|observer|strategy|"
+    r"public|private|protected|static|final|virtual)\b",
+    re.IGNORECASE,
+)
+
+
+def _extract_class_features(
+    text: str, lines: list[str],
+) -> tuple[list[ClassInfo], list[ClassRelation]]:
+    """Extract OOP class definitions, members, and relationships."""
+    classes: dict[str, ClassInfo] = {}
+    relations: list[ClassRelation] = []
+    seen_rels: set[tuple[str, str, str]] = set()
+
+    def _add_rel(src: str, dst: str, kind: str, label: str = "") -> None:
+        key = (src, dst, kind)
+        if key not in seen_rels and src != dst:
+            seen_rels.add(key)
+            relations.append(ClassRelation(src=src, dst=dst, kind=kind, label=label))
+
+    def _ensure_class(name: str, stereotype: str = "") -> ClassInfo:
+        if name not in classes:
+            classes[name] = ClassInfo(
+                name=name, attributes=[], methods=[], stereotype=stereotype,
+            )
+        elif stereotype and not classes[name].stereotype:
+            classes[name].stereotype = stereotype
+        return classes[name]
+
+    # Pass 1: detect class declarations
+    for m in _CLASS_DECL_RE.finditer(text):
+        raw = m.group(0).strip()
+        name = m.group(1).split("<")[0]
+        stereo = ""
+        if "interface " in raw:
+            stereo = "interface"
+        elif "abstract " in raw:
+            stereo = "abstract"
+        elif "enum " in raw:
+            stereo = "enum"
+        _ensure_class(name, stereo)
+
+    for m in _CLASS_HEADING_RE.finditer(text):
+        stereo = m.group(1).lower()
+        name = m.group(2)
+        _ensure_class(name, stereo if stereo in ("interface", "enum", "abstract") else "")
+
+    # Pass 2: heading-based class blocks — ## ClassName followed by attributes/methods
+    # Only scan bare PascalCase headings if Pass 1 found enough explicit classes
+    use_name_fallback = len(classes) >= 2
+    i = 0
+    while i < len(lines):
+        cname = None
+        hm = _CLASS_HEADING_RE.match(lines[i])
+        if hm:
+            cname = hm.group(2).split("<")[0]
+        elif use_name_fallback:
+            nm = _CLASS_NAME_BLOCK_RE.match(lines[i])
+            if nm:
+                cname = nm.group(1).split("<")[0]
+        if cname and (cname in classes or (use_name_fallback and len(cname) > 1 and not cname.isupper())):
+                ci = _ensure_class(cname)
+                j = i + 1
+                while j < len(lines):
+                    ln = lines[j].strip()
+                    if not ln or ln.startswith("#"):
+                        break
+                    mm = _METHOD_SIG_RE.match(ln)
+                    am = _ATTR_SIG_RE.match(ln)
+                    if mm:
+                        vis = _VISIBILITY_MAP.get(mm.group(1) or "", "+")
+                        ret = mm.group(2) or "void"
+                        name_part = mm.group(3)
+                        params = mm.group(4).strip()
+                        ci.methods.append((vis, ret, f"{name_part}({params})"))
+                    elif am:
+                        vis = _VISIBILITY_MAP.get(am.group(1) or "", "-")
+                        ci.attributes.append((vis, am.group(2), am.group(3)))
+                    elif ln.startswith("- ") or ln.startswith("* "):
+                        item = ln.lstrip("-* ").strip()
+                        if "(" in item and ")" in item:
+                            ci.methods.append(("+", "void", item.split(":")[0].strip()))
+                        else:
+                            parts = item.split(":")
+                            if len(parts) == 2:
+                                ci.attributes.append(("-", parts[1].strip(), parts[0].strip()))
+                            else:
+                                ci.attributes.append(("-", "any", item))
+                    j += 1
+                i = j
+                continue
+        i += 1
+
+    # Pass 3: relationships from text
+    for m in _INHERIT_RE.finditer(text):
+        child, parent = m.group(1), m.group(2)
+        _ensure_class(child)
+        _ensure_class(parent)
+        _add_rel(child, parent, "inheritance")
+
+    for m in _IMPLEMENT_RE.finditer(text):
+        cls = m.group(1)
+        _ensure_class(cls)
+        for iface in re.split(r",\s*", m.group(2).strip()):
+            iface = iface.strip()
+            if iface and re.match(r"^[A-Z][\w]*$", iface):
+                if iface not in classes:
+                    _ensure_class(iface, "interface")
+                _add_rel(cls, iface, "implementation")
+
+    for m in _COMPOSE_RE.finditer(text):
+        owner, part = m.group(1), m.group(2)
+        if owner in classes or part in classes:
+            _ensure_class(owner)
+            _ensure_class(part)
+            _add_rel(owner, part, "composition")
+
+    for m in _AGGREGATE_RE.finditer(text):
+        owner, ref = m.group(1), m.group(2)
+        if owner in classes or ref in classes:
+            _ensure_class(owner)
+            _ensure_class(ref)
+            _add_rel(owner, ref, "aggregation")
+
+    for m in _DEPEND_RE.finditer(text):
+        src, dst = m.group(1), m.group(2)
+        if src in classes or dst in classes:
+            _ensure_class(src)
+            _ensure_class(dst)
+            _add_rel(src, dst, "dependency")
+
+    for m in _ASSOC_RE.finditer(text):
+        a, b = m.group(1), m.group(2)
+        if a in classes or b in classes:
+            _ensure_class(a)
+            _ensure_class(b)
+            _add_rel(a, b, "association")
+
+    return list(classes.values()), relations
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # §12  SCORING
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1111,7 +1459,10 @@ def _score_types(
     transitions: list[StateTransition],
     timeline_events: list[TimelineEvent],
     er_features: dict,
+    class_infos: list[ClassInfo],
+    class_relations: list[ClassRelation],
     structure: dict,
+    text: str = "",
     arrow_msg_lines: int = 0,
 ) -> dict[str, float]:
     """Score each diagram type based on extracted features."""
@@ -1123,6 +1474,7 @@ def _score_types(
         "stateDiagram-v2": 0.0,
         "timeline": 0.0,
         "erDiagram": 0.0,
+        "classDiagram": 0.0,
     }
     total_arrows = structure.get("arrows", 0)
 
@@ -1159,6 +1511,9 @@ def _score_types(
             scores["mindmap"] += 5.0
     scores["mindmap"] += structure.get("headings", 0) * 2.5
     scores["mindmap"] += structure.get("bullets", 0) * 0.8
+    # Dampen when strong class/OOP signals are present
+    if len(class_infos) >= 3 and len(class_relations) >= 2:
+        scores["mindmap"] *= 0.4
 
     # ── Flowchart scoring ──
     scores["flowchart"] += len(steps) * 3.0
@@ -1195,6 +1550,23 @@ def _score_types(
     scores["erDiagram"] += er_features["table_count"] * 5.0
     if er_features["table_count"] >= 2 and er_features["rel_count"] >= 1:
         scores["erDiagram"] += 10.0
+
+    # ── Class diagram scoring ──
+    classes_with_members = sum(
+        1 for c in class_infos if c.attributes or c.methods
+    )
+    scores["classDiagram"] += len(class_infos) * 3.0
+    scores["classDiagram"] += classes_with_members * 5.0
+    scores["classDiagram"] += len(class_relations) * 4.0
+    oop_hits = len(_OOP_KEYWORDS_RE.findall(text))
+    scores["classDiagram"] += min(oop_hits, 15) * 1.5
+    if len(class_infos) >= 2 and len(class_relations) >= 1:
+        scores["classDiagram"] += 12.0
+    if len(class_infos) >= 2 and classes_with_members >= 2:
+        scores["classDiagram"] += 10.0
+    # Dampen class score when ER tables dominate (tables ≠ classes)
+    if er_features["table_count"] >= 2 and len(class_infos) < er_features["table_count"]:
+        scores["classDiagram"] *= 0.3
 
     return scores
 
@@ -1506,7 +1878,16 @@ def _gen_timeline(events: list[TimelineEvent]) -> str:
     return "\n".join(tl_lines)
 
 
-def _gen_er(er_features: dict) -> str:
+_ER_TEXT_REL_RE = re.compile(
+    r"(\w[\w_ ]*?)\s+"
+    r"(?:has\s+(?:many|one|zero\s+or\s+more|one\s+or\s+more)|"
+    r"belongs?\s+to|references?|contains?|owns?)\s+"
+    r"(\w[\w_ ]*?)(?:\.|,|$)",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _gen_er(er_features: dict, text: str = "") -> str:
     """Generate Mermaid ER diagram syntax from table entities."""
     tables = er_features.get("table_entities", [])
     if not tables:
@@ -1526,16 +1907,90 @@ def _gen_er(er_features: dict) -> str:
             if len(cells) >= 2:
                 col_name = re.sub(r"[^A-Za-z0-9_]", "_", cells[0]).strip("_")
                 col_type = re.sub(r"[^A-Za-z0-9_]", "_", cells[1]).strip("_") or "string"
-                pk_marker = " PK" if any(
-                    k in cells[0].lower() for k in ("id", "pk", "primary")
-                ) else ""
-                er_lines.append(f"        {col_type} {col_name}{pk_marker}")
+                constraint = cells[2].strip().upper() if len(cells) >= 3 else ""
+                if "PK" in constraint or "PRIMARY" in constraint:
+                    marker = " PK"
+                elif "FK" in constraint or "FOREIGN" in constraint:
+                    marker = " FK"
+                else:
+                    marker = ""
+                er_lines.append(f"        {col_type} {col_name}{marker}")
         er_lines.append("    }")
 
-    for i in range(len(entity_names) - 1):
-        er_lines.append(f"    {entity_names[i]} ||--o{{ {entity_names[i + 1]} : references")
+    entity_name_set = {n.lower(): n for n in entity_names}
+    added_rels: set[tuple[str, str]] = set()
+
+    for m in _ER_TEXT_REL_RE.finditer(text):
+        src_raw = re.sub(r"[^A-Za-z0-9_]", "_", m.group(1).strip()).strip("_")
+        dst_raw = re.sub(r"[^A-Za-z0-9_]", "_", m.group(2).strip()).strip("_")
+        src = entity_name_set.get(src_raw.lower())
+        dst = entity_name_set.get(dst_raw.lower())
+        if not src or not dst or src == dst:
+            continue
+        verb = m.group(0).lower()
+        pair = (src, dst)
+        if pair in added_rels:
+            continue
+        added_rels.add(pair)
+        if "has many" in verb or "has one or more" in verb or "has zero or more" in verb:
+            er_lines.append(f"    {src} ||--o{{ {dst} : has")
+        elif "has one" in verb:
+            er_lines.append(f"    {src} ||--|| {dst} : has")
+        elif "belongs to" in verb:
+            er_lines.append(f"    {dst} ||--o{{ {src} : contains")
+        elif "contains" in verb or "owns" in verb:
+            er_lines.append(f"    {src} ||--o{{ {dst} : contains")
+        else:
+            er_lines.append(f"    {src} ||--o{{ {dst} : references")
+
+    if not added_rels and len(entity_names) > 1:
+        for i in range(len(entity_names) - 1):
+            er_lines.append(
+                f"    {entity_names[i]} ||--o{{ {entity_names[i + 1]} : references"
+            )
 
     return "\n".join(er_lines)
+
+
+def _gen_class(
+    class_infos: list[ClassInfo],
+    class_relations: list[ClassRelation],
+) -> str:
+    """Generate Mermaid classDiagram syntax."""
+    if not class_infos:
+        return ""
+
+    out = ["classDiagram"]
+    _REL_ARROWS = {
+        "inheritance": "--|>",
+        "implementation": "..|>",
+        "composition": "*--",
+        "aggregation": "o--",
+        "association": "-->",
+        "dependency": "..>",
+    }
+
+    for ci in class_infos:
+        safe = re.sub(r"[^A-Za-z0-9_]", "_", ci.name)
+        if ci.stereotype:
+            out.append(f"    class {safe} {{")
+            out.append(f"        <<{ci.stereotype}>>")
+        else:
+            out.append(f"    class {safe} {{")
+        for vis, typ, name in ci.attributes:
+            out.append(f"        {vis}{typ} {name}")
+        for vis, ret, sig in ci.methods:
+            out.append(f"        {vis}{ret} {sig}")
+        out.append("    }")
+
+    for rel in class_relations:
+        src = re.sub(r"[^A-Za-z0-9_]", "_", rel.src)
+        dst = re.sub(r"[^A-Za-z0-9_]", "_", rel.dst)
+        arrow = _REL_ARROWS.get(rel.kind, "-->")
+        label = f" : {rel.label}" if rel.label else ""
+        out.append(f"    {src} {arrow} {dst}{label}")
+
+    return "\n".join(out)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1554,6 +2009,7 @@ def auto_analyze(text: str) -> tuple[str, str]:
       - State machines and transitions
       - Timeline events and milestones
       - Entity-attribute-relationship data models
+      - OOP classes, methods, attributes, and inheritance/composition
 
     It scores each diagram type, picks the best fit, and generates
     the complete diagram syntax ready for rendering.
@@ -1575,13 +2031,16 @@ def auto_analyze(text: str) -> tuple[str, str]:
     states, transitions = _extract_states(text, sentences)
     timeline_events = _extract_timeline(text, lines)
     er_features = _extract_er_features(text, lines)
+    class_infos, class_relations = _extract_class_features(text, lines)
     _, _, arrow_msg_lines = _extract_arrow_chains(text)
 
     # Score
     scores = _score_types(
         entities, relationships, hierarchy, steps,
         interactions, states, transitions,
-        timeline_events, er_features, structure,
+        timeline_events, er_features,
+        class_infos, class_relations,
+        structure, text=text,
         arrow_msg_lines=arrow_msg_lines,
     )
 
@@ -1642,7 +2101,10 @@ def auto_analyze(text: str) -> tuple[str, str]:
         syntax = _gen_timeline(timeline_events)
 
     elif best_type == "erDiagram":
-        syntax = _gen_er(er_features)
+        syntax = _gen_er(er_features, text)
+
+    elif best_type == "classDiagram":
+        syntax = _gen_class(class_infos, class_relations)
 
     if not syntax:
         if hierarchy and _count_tree_nodes(hierarchy) >= 3:

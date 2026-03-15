@@ -321,7 +321,7 @@ APPLE_THEME_DARK = {
 # ---------------------------------------------------------------------------
 
 APPLE_CSS_LIGHT = """
-svg { font-family: """ + FONT_STACK + """; }
+svg { font-family: """ + FONT_STACK + """; background: #FFFFFF !important; }
 
 /* --- Flowchart --- */
 .node rect, .node circle, .node ellipse, .node polygon,
@@ -506,6 +506,23 @@ def _inject_css_into_svg(svg: str, css: str) -> str:
     return svg
 
 
+def _ensure_white_background(svg: str) -> str:
+    """Insert a white background rect so the diagram has a solid white background in any viewer."""
+    import re as _re
+    viewbox_match = _re.search(r'\bviewBox=["\']([^"\']+)["\']', svg)
+    if not viewbox_match:
+        return svg
+    parts = viewbox_match.group(1).strip().split()
+    if len(parts) != 4:
+        return svg
+    x, y, w, h = parts[0], parts[1], parts[2], parts[3]
+    rect = f'<rect x="{x}" y="{y}" width="{w}" height="{h}" fill="#FFFFFF"/>'
+    insert_after = svg.find(">", svg.find("<svg"))
+    if insert_after == -1:
+        return svg
+    return svg[: insert_after + 1] + rect + svg[insert_after + 1 :]
+
+
 async def _ensure_chromium() -> None:
     """Auto-install Chromium if not already present."""
     import subprocess
@@ -597,7 +614,15 @@ async def render_mermaid(
     if look == "handDrawn":
         look_config = 'look: "handDrawn",'
 
-    escaped_syntax = syntax.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$")
+    escaped_syntax = (
+        syntax
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace("\\", "\\\\")
+        .replace("`", "\\`")
+        .replace("$", "\\$")
+    )
 
     is_gantt = syntax.strip().lower().startswith("gantt")
     container_style = "width: 1800px;" if is_gantt else "width: fit-content;"
@@ -614,7 +639,7 @@ async def render_mermaid(
 </head>
 <body>
     <pre class="mermaid" id="diagram">
-{syntax}
+{escaped_syntax}
     </pre>
     <script>
         mermaid.initialize({{
@@ -682,6 +707,8 @@ async def render_mermaid(
             )
 
         svg = _inject_css_into_svg(svg, custom_css)
+        if theme == "light":
+            svg = _ensure_white_background(svg)
         return svg
 
     finally:
