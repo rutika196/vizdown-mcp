@@ -148,7 +148,7 @@ def download_icon(local_name: str, iconify_id: str) -> bool:
     dest = ICONS_DIR / f"{local_name}.svg"
 
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "vizdown-mcp/1.0"})
+        req = urllib.request.Request(url, headers={"User-Agent": "clarity-beta/1.0"})
         with urllib.request.urlopen(req, timeout=15) as resp:
             svg_data = resp.read().decode("utf-8")
 

@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "vizdown-mcp"
+name = "clarity-beta"
 version = "0.1.0"
-description = "MCP server that converts Markdown files into beautiful diagrams"
+description = "Clarity-beta: MCP server that converts Markdown files into beautiful diagrams"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [project.scripts]
-vizdown-mcp = "src.server:main"
+clarity-beta = "src.server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src"]

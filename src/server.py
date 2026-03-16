@@ -1,4 +1,4 @@
-"""Vizdown-MCP: MCP server that converts Markdown into beautiful diagrams.
+"""Clarity-beta: MCP server that converts Markdown into beautiful diagrams.
 
 Tools:
   render_diagram       — Render an explicit diagram block from Markdown.
@@ -19,10 +19,10 @@ from src.markdown_parser import parse_markdown, DiagramBlock
 from src.diagram_router import render_block
 from src.utils.auto_analyzer import auto_analyze
 
-logger = logging.getLogger("vizdown")
+logger = logging.getLogger("clarity")
 logging.basicConfig(level=logging.INFO)
 
-mcp = FastMCP("Vizdown-MCP")
+mcp = FastMCP("Clarity-beta")
 
 
 def _read_source(file_path: str | None, raw_text: str | None) -> str:

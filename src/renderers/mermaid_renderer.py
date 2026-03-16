@@ -5,17 +5,21 @@ from __future__ import annotations
 import asyncio
 import atexit
 import logging
+from pathlib import Path
 from typing import Optional
 
 from playwright.async_api import Browser, async_playwright, Playwright
 
-logger = logging.getLogger("vizdown.mermaid")
+logger = logging.getLogger("clarity.mermaid")
 
 _playwright: Optional[Playwright] = None
 _browser: Optional[Browser] = None
 _lock = asyncio.Lock()
 
 MERMAID_CDN = "https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"
+
+# Bundled fallback when CDN is unreachable (offline / firewall). Populate via: python download_mermaid.py
+_MERMAID_BUNDLED_PATH = Path(__file__).resolve().parent / ".." / "static" / "mermaid" / "mermaid.min.js"
 
 FONT_STACK = "'SF Pro Display', 'SF Pro Text', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
 
@@ -523,6 +527,68 @@ def _ensure_white_background(svg: str) -> str:
     return svg[: insert_after + 1] + rect + svg[insert_after + 1 :]
 
 
+def _get_bundled_mermaid_script() -> Optional[str]:
+    """Return bundled mermaid.min.js content for offline fallback, or None if not present."""
+    path = _MERMAID_BUNDLED_PATH.resolve()
+    if not path.is_file():
+        return None
+    try:
+        return path.read_text(encoding="utf-8")
+    except Exception as e:
+        logger.warning("Could not read bundled Mermaid: %s", e)
+        return None
+
+
+def _build_mermaid_html(
+    escaped_syntax: str,
+    theme_vars_js: str,
+    custom_css: str,
+    look_config: str,
+    container_style: str,
+    use_bundled_script: Optional[str] = None,
+) -> str:
+    """Build the HTML page that loads Mermaid and renders the diagram.
+
+    If use_bundled_script is provided, the script is inlined (no CDN). Otherwise the CDN script tag is used.
+    """
+    if use_bundled_script:
+        # Escape so </script> in the JS doesn't close the tag
+        script_body = use_bundled_script.replace("</script>", "<\\/script>")
+        script_tag = f"<script>\n{script_body}\n</script>"
+    else:
+        script_tag = f'<script src="{MERMAID_CDN}"></script>'
+
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+    {script_tag}
+    <style>
+        body {{ margin: 0; padding: 20px; background: transparent; }}
+        #diagram {{ {container_style} }}
+        {custom_css}
+    </style>
+</head>
+<body>
+    <pre class="mermaid" id="diagram">
+{escaped_syntax}
+    </pre>
+    <script>
+        mermaid.initialize({{
+            startOnLoad: false,
+            theme: 'base',
+            themeVariables: {theme_vars_js},
+            {look_config}
+            securityLevel: 'loose',
+            flowchart: {{ htmlLabels: true, curve: 'basis' }},
+            sequence: {{ mirrorActors: false }},
+            gantt: {{ useWidth: 1760 }},
+        }});
+        mermaid.run({{ querySelector: '#diagram' }});
+    </script>
+</body>
+</html>"""
+
+
 async def _ensure_chromium() -> None:
     """Auto-install Chromium if not already present."""
     import subprocess
@@ -627,41 +693,12 @@ async def render_mermaid(
     is_gantt = syntax.strip().lower().startswith("gantt")
     container_style = "width: 1800px;" if is_gantt else "width: fit-content;"
 
-    html = f"""<!DOCTYPE html>
-<html>
-<head>
-    <script src="{MERMAID_CDN}"></script>
-    <style>
-        body {{ margin: 0; padding: 20px; background: transparent; }}
-        #diagram {{ {container_style} }}
-        {custom_css}
-    </style>
-</head>
-<body>
-    <pre class="mermaid" id="diagram">
-{escaped_syntax}
-    </pre>
-    <script>
-        mermaid.initialize({{
-            startOnLoad: false,
-            theme: 'base',
-            themeVariables: {theme_vars_js},
-            {look_config}
-            securityLevel: 'loose',
-            flowchart: {{ htmlLabels: true, curve: 'basis' }},
-            sequence: {{ mirrorActors: false }},
-            gantt: {{ useWidth: 1760 }},
-        }});
-        mermaid.run({{ querySelector: '#diagram' }});
-    </script>
-</body>
-</html>"""
+    bundled_script = _get_bundled_mermaid_script()
 
-    try:
-        await page.set_content(html, wait_until="networkidle")
-
+    async def _render_with_html(html: str) -> str:
+        await page.set_content(html, wait_until="domcontentloaded")
         try:
-            await page.wait_for_selector("#diagram svg", timeout=10000)
+            await page.wait_for_selector("#diagram svg", timeout=15000)
         except Exception:
             parse_errors = [e for e in errors if "Parse error" in e or "Syntax error" in e or "error" in e.lower()]
             if parse_errors:
@@ -671,7 +708,6 @@ async def render_mermaid(
             raise RuntimeError(
                 f"Mermaid render timeout. Errors: {errors}\n\nFailing syntax:\n{syntax}"
             )
-
         await page.eval_on_selector(
             "#diagram svg",
             """el => {
@@ -692,12 +728,10 @@ async def render_mermaid(
                 });
             }""",
         )
-
         svg = await page.eval_on_selector(
             "#diagram svg",
             "el => el.outerHTML",
         )
-
         if 'aria-roledescription="error"' in svg:
             error_text = await page.eval_on_selector(
                 "#diagram svg", "el => el.textContent"
@@ -705,11 +739,32 @@ async def render_mermaid(
             raise RuntimeError(
                 f"Mermaid syntax error: {error_text.strip()}\n\nFailing syntax:\n{syntax[:500]}"
             )
+        return svg
 
+    html_cdn = _build_mermaid_html(
+        escaped_syntax, theme_vars_js, custom_css, look_config, container_style, use_bundled_script=None
+    )
+    html_bundled = (
+        _build_mermaid_html(
+            escaped_syntax, theme_vars_js, custom_css, look_config, container_style, use_bundled_script=bundled_script
+        )
+        if bundled_script
+        else None
+    )
+
+    try:
+        try:
+            svg = await _render_with_html(html_cdn)
+        except Exception as cdn_err:
+            if html_bundled is not None:
+                logger.info("CDN unreachable (%s), using bundled Mermaid", cdn_err)
+                errors.clear()
+                svg = await _render_with_html(html_bundled)
+            else:
+                raise
         svg = _inject_css_into_svg(svg, custom_css)
         if theme == "light":
             svg = _ensure_white_background(svg)
         return svg
-
     finally:
         await page.close()

@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 import logging
 
-logger = logging.getLogger("vizdown")
+logger = logging.getLogger("clarity")
 
 
 async def svg_to_png(svg: str, scale: int = 2) -> str:

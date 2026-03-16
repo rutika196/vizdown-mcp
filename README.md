@@ -1,12 +1,12 @@
-# Vizdown-MCP
+# Clarity-beta
 
-An MCP server that converts Markdown files into beautiful diagrams — flowcharts, mind maps, architecture diagrams, ER diagrams, Gantt charts, sequence diagrams, and more. Built with Apple HIG design language.
+Clarity-beta is an MCP server that converts Markdown files into beautiful diagrams — flowcharts, mind maps, architecture diagrams, ER diagrams, Gantt charts, sequence diagrams, and more. Built with Apple HIG design language.
 
 ## Installation
 
 ```bash
-git clone https://github.com/rutika196/vizdown-mcp.git
-cd vizdown-mcp
+git clone https://github.com/rutika196/clarity-beta.git
+cd clarity-beta
 python3 -m venv .venv
 source .venv/bin/activate        # macOS / Linux
 # .venv\Scripts\activate         # Windows
@@ -23,16 +23,16 @@ Create or edit `.cursor/mcp.json` in your project root:
 ```json
 {
   "mcpServers": {
-    "vizdown-mcp": {
-      "command": "/absolute/path/to/vizdown-mcp/.venv/bin/python",
+    "clarity-beta": {
+      "command": "/absolute/path/to/clarity-beta/.venv/bin/python",
       "args": ["-m", "src.server"],
-      "cwd": "/absolute/path/to/vizdown-mcp"
+      "cwd": "/absolute/path/to/clarity-beta"
     }
   }
 }
 ```
 
-> Replace `/absolute/path/to/vizdown-mcp` with your actual path, e.g. `~/Desktop/vizdown-mcp`.
+> Replace `/absolute/path/to/clarity-beta` with your actual project path.
 
 ### VS Code
 
@@ -41,10 +41,10 @@ Create `.vscode/mcp.json` in your project root:
 ```json
 {
   "servers": {
-    "vizdown-mcp": {
-      "command": "/absolute/path/to/vizdown-mcp/.venv/bin/python",
+    "clarity-beta": {
+      "command": "/absolute/path/to/clarity-beta/.venv/bin/python",
       "args": ["-m", "src.server"],
-      "cwd": "/absolute/path/to/vizdown-mcp"
+      "cwd": "/absolute/path/to/clarity-beta"
     }
   }
 }
@@ -61,20 +61,20 @@ JetBrains IDEs (2025.1+) support MCP via the **AI Assistant** plugin.
 
 | Field | Value |
 |-------|-------|
-| **Name** | `vizdown-mcp` |
-| **Command** | `/absolute/path/to/vizdown-mcp/.venv/bin/python` |
+| **Name** | `clarity-beta` |
+| **Command** | `/absolute/path/to/clarity-beta/.venv/bin/python` |
 | **Arguments** | `-m src.server` |
-| **Working Directory** | `/absolute/path/to/vizdown-mcp` |
+| **Working Directory** | `/absolute/path/to/clarity-beta` |
 
 Or edit the MCP config file directly at `~/.config/jetbrains/mcp.json`:
 
 ```json
 {
   "mcpServers": {
-    "vizdown-mcp": {
-      "command": "/absolute/path/to/vizdown-mcp/.venv/bin/python",
+    "clarity-beta": {
+      "command": "/absolute/path/to/clarity-beta/.venv/bin/python",
       "args": ["-m", "src.server"],
-      "cwd": "/absolute/path/to/vizdown-mcp"
+      "cwd": "/absolute/path/to/clarity-beta"
     }
   }
 }
@@ -89,10 +89,10 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) o
 ```json
 {
   "mcpServers": {
-    "vizdown-mcp": {
-      "command": "/absolute/path/to/vizdown-mcp/.venv/bin/python",
+    "clarity-beta": {
+      "command": "/absolute/path/to/clarity-beta/.venv/bin/python",
       "args": ["-m", "src.server"],
-      "cwd": "/absolute/path/to/vizdown-mcp"
+      "cwd": "/absolute/path/to/clarity-beta"
     }
   }
 }
@@ -104,7 +104,7 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) o
 
 ```bash
 source .venv/bin/activate
-vizdown-mcp
+clarity-beta
 # or
 python -m src.server
 ```

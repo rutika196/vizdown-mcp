@@ -6,7 +6,7 @@ import logging
 
 from src.markdown_parser import DiagramBlock
 
-logger = logging.getLogger("vizdown.router")
+logger = logging.getLogger("clarity.router")
 
 CUSTOM_SVG_TYPES = {"mindmap", "architecture", "service-diagram"}
 

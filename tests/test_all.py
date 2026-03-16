@@ -1,4 +1,4 @@
-"""Tests for Vizdown-MCP components."""
+"""Tests for Clarity-beta components."""
 
 from __future__ import annotations
 
